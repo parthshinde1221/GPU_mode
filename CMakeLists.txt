@@ -20,3 +20,4 @@ include_directories(${CMAKE_SOURCE_DIR}/include)
 
 # Add your first kernel project
 add_subdirectory(matrix_multiplication)
+add_subdirectory(vector_add)
