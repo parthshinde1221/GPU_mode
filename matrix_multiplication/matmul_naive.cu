@@ -9,9 +9,9 @@ __global__ void matmul_kernel(const float* A, const float* B, float* C, int N) {
     if (row < N && col < N) {
         float sum = 0.0f;
         for (int k = 0; k < N; ++k) {
-            sum += A[row * N + k] * B[k * N + col];
+            C[row * N + col] += A[row * N + k] * B[k * N + col];
         }
-        C[row * N + col] = sum;
+        // C[row * N + col] = sum;
     }
 }
 

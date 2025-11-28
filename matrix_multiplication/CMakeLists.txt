@@ -1,9 +1,28 @@
-set(TARGET matmul)
+# Old CMake - just add two exuctables if you wnat to make multiple files
+# set(TARGET matmul)
 
-add_executable(${TARGET}
-    matmul.cu
-)
+# add_executable(${TARGET}
+#     matmul.cu
+# )
 
-set_target_properties(${TARGET} PROPERTIES
-    CUDA_SEPARABLE_COMPILATION ON
-)
+# set_target_properties(${TARGET} PROPERTIES
+#     CUDA_SEPARABLE_COMPILATION ON
+# )
+
+# Glob all .cu files in this directory
+file(GLOB MATMUL_SOURCES *.cu)
+
+foreach(src ${MATMUL_SOURCES})
+    # Get the filename without extension -> becomes the target name
+    get_filename_component(target ${src} NAME_WE)
+
+    message(STATUS "Adding matmul target: ${target} from ${src}")
+
+    add_executable(${target}
+        ${src}
+    )
+
+    set_target_properties(${target} PROPERTIES
+        CUDA_SEPARABLE_COMPILATION ON
+    )
+endforeach()
