@@ -1,4 +1,4 @@
-set(TARGET matmul)
+set(TARGET vec_add)
 
 add_executable(${TARGET}
     vec_add.cu
