@@ -41,7 +41,7 @@ int main() {
     CUDA_CHECK(cudaMemcpy(d_a, h_a.data(), bytes, cudaMemcpyHostToDevice));
     CUDA_CHECK(cudaMemcpy(d_b, h_b.data(), bytes, cudaMemcpyHostToDevice));
 
-    int block = 64;
+    int block = 256;
     int grid  = (N + block - 1) / block;
 
     vec_add_kernel<<<grid, block>>>(d_a, d_b, d_c, N);
