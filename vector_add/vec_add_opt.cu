@@ -2,12 +2,25 @@
 #include <vector>
 #include "cuda_utils.hpp"
 
-__global__ void vec_add_kernel(const float* a, const float* b, float* c, int n) {
+// __global__ void vec_add_kernel(const float* a, const float* b, float* c, int n) {
+//     int idx = blockIdx.x * blockDim.x + threadIdx.x;
+//     if (idx < n) {
+//         c[idx] = a[idx] + b[idx];
+//     }
+// }
+
+__global__ void vec_add_kernel(const float* __restrict__ a,
+                               const float* __restrict__ b,
+                               float* __restrict__ c,
+                               int n) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
-    if (idx < n) {
-        c[idx] = a[idx] + b[idx];
+    int stride = blockDim.x * gridDim.x;
+
+    for (int i = idx; i < n; i += stride) {
+        c[i] = a[i] + b[i];
     }
 }
+
 
 int main() {
     const int N = 1 << 20;  // 1M elements
