@@ -57,7 +57,7 @@ int main(){
 
 
     assert(d_output == sum_truth);
-    cout << d_output;
+    std::cout << "The output is" << d_output;
     cudaFree(d_input);
     cudaFree(d_output);
 
