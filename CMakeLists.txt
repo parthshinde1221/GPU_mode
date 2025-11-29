@@ -19,5 +19,6 @@ set(CMAKE_CUDA_ARCHITECTURES 70 75 80 86)
 include_directories(${CMAKE_SOURCE_DIR}/include)
 
 # Add your first kernel project
-add_subdirectory(matrix_multiplication)
-add_subdirectory(vector_add)
+# add_subdirectory(matrix_multiplication)
+# add_subdirectory(vector_add)
+add_subdirectory(reduction)
