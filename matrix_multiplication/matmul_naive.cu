@@ -2,6 +2,18 @@
 #include <vector>
 #include "cuda_utils.hpp"
 
+#define PRINT_MAT(X, N)                                      \
+    do {                                                     \
+        for (int i = 0; i < (N); ++i) {                      \
+            for (int j = 0; j < (N); ++j) {                  \
+                std::cout << (X)[i * (N) + j] << " ";        \
+            }                                                \
+            std::cout << "\n";                               \
+        }                                                    \
+    } while (0)
+
+
+
 __global__ void matmul_kernel(const float* A, const float* B, float* C, int N) {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int col = blockIdx.x * blockDim.x + threadIdx.x;
@@ -46,6 +58,8 @@ int main() {
 
     std::cout << "C[0] = " << h_C[0]
               << " (expected " << 2.0f * N << ")\n";
+
+    // PRINT_MAT(h_C, N);
 
     CUDA_CHECK(cudaFree(d_A));
     CUDA_CHECK(cudaFree(d_B));

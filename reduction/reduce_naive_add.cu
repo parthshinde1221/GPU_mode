@@ -70,7 +70,7 @@
 #include <numeric>
 #include <cmath>
 #include <cassert>
-#include "cuda_utils.hpp"  // assumes CUDA_CHECK macro is defined here
+#include "cuda_utils.hpp" 
 
 #define BLOCK_SZ 256
 
@@ -80,7 +80,8 @@ __global__ void naive_add(const float* __restrict__ input,
                           int N) {
     int idx = blockIdx.x * blockDim.x + threadIdx.x;
     if (idx < N) {
-        atomicAdd(output, input[idx]);  // output points to ONE float in global memory
+        // Output to single float in device Memory
+        atomicAdd(output, input[idx]);  
     }
 }
 
@@ -92,7 +93,7 @@ int main() {
     // Host data
     std::vector<float> h_a(N);
     for (int i = 0; i < N; ++i) {
-        h_a[i] = (i % 2 == 0) ? 1.0f : 2.0f;  // simple pattern: 1,2,1,2,...
+        h_a[i] = (i % 2 == 0) ? 1.0f : 2.0f;  
     }
 
     // CPU ground truth
@@ -103,8 +104,8 @@ int main() {
     float* d_output = nullptr;
 
     // Allocate device memory
-    CUDA_CHECK(cudaMalloc(&d_input,  bytes));         // N floats
-    CUDA_CHECK(cudaMalloc(&d_output, sizeof(float))); // single accumulator
+    CUDA_CHECK(cudaMalloc(&d_input,  bytes));         
+    CUDA_CHECK(cudaMalloc(&d_output, sizeof(float)));
 
     // Copy input to device
     CUDA_CHECK(cudaMemcpy(d_input, h_a.data(), bytes, cudaMemcpyHostToDevice));
@@ -125,12 +126,13 @@ int main() {
     float h_sum = 0.0f;
     CUDA_CHECK(cudaMemcpy(&h_sum, d_output, sizeof(float), cudaMemcpyDeviceToHost));
 
-    // Compare with tolerance (better than exact == for floats)
+    // Compare with tolerance (approx for floats)
     float diff   = std::fabs(h_sum - sum_truth);
     float max_ab = std::max(std::fabs(h_sum), std::fabs(sum_truth));
     float rel_eps = 1e-5f;
     float abs_eps = 1e-6f;
 
+    // test changes
     assert(diff <= std::max(abs_eps, rel_eps * max_ab));
 
     std::cout << "CPU sum: " << sum_truth
