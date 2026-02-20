@@ -1,68 +1,159 @@
-#include <iostream>
+// rmsnorm_nocub.cu
+// nvcc -O3 -lineinfo rmsnorm_nocub.cu -o rmsnorm_nocub
+//
+// Non-CUB RMSNorm over dim=1 for x shaped [B, F, D1, D2] (NCHW).
+// One block per (b, sdata) where s = d1*D2 + d2.
+
+#include <cuda_runtime.h>
+#include <cstdio>
+#include <cmath>
 #include <vector>
-#include "cuda_utils.hpp"
+#include <random>
+#include <algorithm>
 
-#define PRINT_MAT(X, N)                                      \
-    do {                                                     \
-        for (int i = 0; i < (N); ++i) {                      \
-            for (int j = 0; j < (N); ++j) {                  \
-                std::cout << (X)[i * (N) + j] << " ";        \
-            }                                                \
-            std::cout << "\n";                               \
-        }                                                    \
-    } while (0)
+#define CUDA_CHECK(call)                                                     \
+  do {                                                                       \
+    cudaError_t err = (call);                                                \
+    if (err != cudaSuccess) {                                                \
+      std::fprintf(stderr, "CUDA error %s:%d: %s\n", __FILE__, __LINE__,     \
+                   cudaGetErrorString(err));                                 \
+      std::exit(1);                                                          \
+    }                                                                        \
+  } while (0)
 
+template <int BLOCK_THREADS>
+__global__ void rmsnorm_dim1_nocub(
+    const float* __restrict__ x,
+    float* __restrict__ y,
+    int B, int F, int D1, int D2,
+    float eps
+) {
+    int b   = (int)blockIdx.y;
+    int s   = (int)blockIdx.x;
+    int tid = (int)threadIdx.x;
 
+    int S = D1 * D2;
+    if (b >= B || s >= S) return;
 
-__global__ void matmul_kernel(const float* A, const float* B, float* C, int N) {
-    int row = blockIdx.y * blockDim.y + threadIdx.y;
-    int col = blockIdx.x * blockDim.x + threadIdx.x;
+    int d1 = s / D2;
+    int d2 = s % D2;
 
-    if (row < N && col < N) {
-        float sum = 0.0f;
-        for (int k = 0; k < N; ++k) {
-            C[row * N + col] += A[row * N + k] * B[k * N + col];
+    // 1) accumulate partial sum of squares for this (b, d1, d2)
+    float thread_sum = 0.0f;
+    for (int f = tid; f < F; f += BLOCK_THREADS) {
+        int idx = ((b * F + f) * D1 + d1) * D2 + d2;
+        float v = x[idx];
+        thread_sum += v * v;
+    }
+
+    // 2) block reduction (shared memory tree reduce)
+    __shared__ float smem[BLOCK_THREADS];
+    smem[tid] = thread_sum;
+    __syncthreads();
+
+    // Reduce smem[0..BLOCK_THREADS-1] to smem[0]
+    for (int offset = BLOCK_THREADS / 2; offset > 0; offset >>= 1) {
+        if (tid < offset) smem[tid] += smem[tid + offset];
+        __syncthreads();
+    }
+
+    float sum_sq = smem[0];
+    float inv_rms = rsqrtf(sum_sq / (float)F + eps);
+
+    // 3) normalize + store
+    for (int f = tid; f < F; f += BLOCK_THREADS) {
+        int idx = ((b * F + f) * D1 + d1) * D2 + d2;
+        y[idx] = x[idx] * inv_rms;
+    }
+}
+
+static void cpu_rmsnorm_dim1_ref(
+    const std::vector<float>& x,
+    std::vector<float>& y,
+    int B, int F, int D1, int D2,
+    float eps
+) {
+    int S = D1 * D2;
+    for (int b = 0; b < B; ++b) {
+        for (int s = 0; s < S; ++s) {
+            int d1 = s / D2;
+            int d2 = s % D2;
+
+            double sum_sq = 0.0;
+            for (int f = 0; f < F; ++f) {
+                int idx = ((b * F + f) * D1 + d1) * D2 + d2;
+                double v = (double)x[idx];
+                sum_sq += v * v;
+            }
+            double inv_rms = 1.0 / std::sqrt(sum_sq / (double)F + (double)eps);
+
+            for (int f = 0; f < F; ++f) {
+                int idx = ((b * F + f) * D1 + d1) * D2 + d2;
+                y[idx] = (float)(x[idx] * inv_rms);
+            }
         }
-        // C[row * N + col] = sum;
     }
 }
 
 int main() {
-    const int N = 512;
-    const size_t bytes = N * N * sizeof(float);
+    // --- Problem sizes (edit as needed) ---
+    const int B  = 2;
+    const int F  = 64;
+    const int D1 = 512;
+    const int D2 = 512;
+    const float eps = 1e-5f;
 
-    std::vector<float> h_A(N * N), h_B(N * N), h_C(N * N);
+    const int S = D1 * D2;
+    const size_t N = (size_t)B * (size_t)F * (size_t)D1 * (size_t)D2;
+    const size_t bytes = N * sizeof(float);
 
-    for (int i = 0; i < N * N; ++i) {
-        h_A[i] = 1.0f;
-        h_B[i] = 2.0f;
-    }
+    std::printf("Running RMSNorm dim=1 (no CUB): B=%d F=%d D1=%d D2=%d (N=%zu)\n",
+                B, F, D1, D2, N);
 
-    float *d_A, *d_B, *d_C;
-    CUDA_CHECK(cudaMalloc(&d_A, bytes));
-    CUDA_CHECK(cudaMalloc(&d_B, bytes));
-    CUDA_CHECK(cudaMalloc(&d_C, bytes));
+    // --- Host data init ---
+    std::vector<float> h_x(N), h_y(N, 0.0f), h_ref(N, 0.0f);
+    std::mt19937 rng(123);
+    std::uniform_real_distribution<float> dist(-1.0f, 1.0f);
+    for (size_t i = 0; i < N; ++i) h_x[i] = dist(rng);
 
-    CUDA_CHECK(cudaMemcpy(d_A, h_A.data(), bytes, cudaMemcpyHostToDevice));
-    CUDA_CHECK(cudaMemcpy(d_B, h_B.data(), bytes, cudaMemcpyHostToDevice));
+    // --- Device alloc/copy ---
+    float *d_x = nullptr, *d_y = nullptr;
+    CUDA_CHECK(cudaMalloc(&d_x, bytes));
+    CUDA_CHECK(cudaMalloc(&d_y, bytes));
+    CUDA_CHECK(cudaMemcpy(d_x, h_x.data(), bytes, cudaMemcpyHostToDevice));
 
-    dim3 block(16, 16);
-    dim3 grid((N + block.x - 1) / block.x,
-              (N + block.y - 1) / block.y);
+    // --- Launch ---
+    constexpr int BLOCK = 256; // try 128/256/512 depending on F
+    dim3 grid(S, B, 1);
+    dim3 block(BLOCK, 1, 1);
 
-    matmul_kernel<<<grid, block>>>(d_A, d_B, d_C, N);
+    rmsnorm_dim1_nocub<BLOCK><<<grid, block>>>(d_x, d_y, B, F, D1, D2, eps);
     CUDA_CHECK(cudaGetLastError());
     CUDA_CHECK(cudaDeviceSynchronize());
 
-    CUDA_CHECK(cudaMemcpy(h_C.data(), d_C, bytes, cudaMemcpyDeviceToHost));
+    // --- Copy back ---
+    CUDA_CHECK(cudaMemcpy(h_y.data(), d_y, bytes, cudaMemcpyDeviceToHost));
 
-    std::cout << "C[0] = " << h_C[0]
-              << " (expected " << 2.0f * N << ")\n";
+    // --- CPU reference + correctness check ---
+    cpu_rmsnorm_dim1_ref(h_x, h_ref, B, F, D1, D2, eps);
 
-    // PRINT_MAT(h_C, N);
+    float max_abs = 0.0f;
+    float max_rel = 0.0f;
+    for (size_t i = 0; i < N; ++i) {
+        float a = h_ref[i];
+        float b = h_y[i];
+        float abs_err = std::fabs(a - b);
+        float rel_err = abs_err / (std::fabs(a) + 1e-12f);
+        max_abs = std::max(max_abs, abs_err);
+        max_rel = std::max(max_rel, rel_err);
+    }
 
-    CUDA_CHECK(cudaFree(d_A));
-    CUDA_CHECK(cudaFree(d_B));
-    CUDA_CHECK(cudaFree(d_C));
-    return 0;
+    std::printf("Max abs err: %.6g\n", max_abs);
+    std::printf("Max rel err: %.6g\n", max_rel);
+
+    // --- Cleanup ---
+    CUDA_CHECK(cudaFree(d_x));
+    CUDA_CHECK(cudaFree(d_y));
+
+    return (max_rel < 1e-5f || max_abs < 1e-5f) ? 0 : 2;
 }
